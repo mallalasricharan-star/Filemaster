@@ -1,11 +1,11 @@
-# FileMaster3_modular
+# Filemaster
 
 Menu-driven Linux file manager in C.
 
 ## Build
 
 ```bash
-cd ~/FileMaster3_modular
+cd ~/Filemaster
 make clean
 make
 ./filemaster
