@@ -10,7 +10,9 @@
 #include <limits.h>
 
 #include "tree_view.h"
+
 #define MAX_ITEMS 1000
+#define BOX_WIDTH 62
 
 /* -----------------------------------------------------------
    Wait for Enter
@@ -29,6 +31,86 @@ typedef struct
     char name[NAME_MAX + 1];
     int isDirectory;
 } TreeItem;
+
+/* -----------------------------------------------------------
+   Calculate display width of UTF-8 text
+   ----------------------------------------------------------- */
+static int displayWidth(const char *text)
+{
+    int width = 0;
+
+    for (size_t i = 0; text[i] != '\0';)
+    {
+        unsigned char c = (unsigned char)text[i];
+
+        if (c < 0x80)
+        {
+            width++;
+            i++;
+        }
+        else if ((c & 0xF0) == 0xF0)
+        {
+            /*
+               Emoji such as 📁 and 📄 normally occupy
+               two terminal columns.
+            */
+            width += 2;
+            i += 4;
+        }
+        else if ((c & 0xE0) == 0xE0)
+        {
+            width++;
+            i += 3;
+        }
+        else if ((c & 0xC0) == 0xC0)
+        {
+            width++;
+            i += 2;
+        }
+        else
+        {
+            i++;
+        }
+    }
+
+    return width;
+}
+
+/* -----------------------------------------------------------
+   Print one line inside the box
+   ----------------------------------------------------------- */
+static void printTreeLine(
+    const char *prefix,
+    const char *branch,
+    const char *icon,
+    const char *name)
+{
+    char content[PATH_MAX];
+
+    snprintf(
+        content,
+        sizeof(content),
+        "%s%s%s %s",
+        prefix,
+        branch,
+        icon,
+        name
+    );
+
+    int width = displayWidth(content);
+
+    printf("│ %s", content);
+
+    if (width < BOX_WIDTH - 1)
+    {
+        for (int i = width; i < BOX_WIDTH - 1; i++)
+        {
+            putchar(' ');
+        }
+    }
+
+    printf("│\n");
+}
 
 /* -----------------------------------------------------------
    Compare names alphabetically
@@ -136,15 +218,15 @@ static void printTree(
     {
         int last = (i == count - 1);
 
-        printf("%s", prefix);
+        const char *branch;
 
         if (last)
         {
-            printf("└── ");
+            branch = "└── ";
         }
         else
         {
-            printf("├── ");
+            branch = "├── ";
         }
 
         char fullPath[PATH_MAX];
@@ -159,7 +241,12 @@ static void printTree(
 
         if (items[i].isDirectory)
         {
-            printf("📁 %s\n", items[i].name);
+            printTreeLine(
+                prefix,
+                branch,
+                "📁",
+                items[i].name
+            );
 
             (*folderCount)++;
 
@@ -193,7 +280,12 @@ static void printTree(
         }
         else
         {
-            printf("📄 %s\n", items[i].name);
+            printTreeLine(
+                prefix,
+                branch,
+                "📄",
+                items[i].name
+            );
 
             (*fileCount)++;
         }
@@ -218,7 +310,7 @@ void treeView(void)
        Find workspace directory.
 
        Example:
-       /home/charan/FileMaster3/workspace
+       /home/charan/FileMaster/workspace
     */
     char workspace[PATH_MAX];
 
@@ -258,38 +350,64 @@ void treeView(void)
     int fileCount = 0;
 
     printf("\n");
-    printf("┌──────────────────────────────────────────────┐\n");
-    printf("│                  TREE VIEW                   │\n");
-    printf("├──────────────────────────────────────────────┤\n");
 
-    /*
-       Root workspace
-    */
-    printf("│ 📁 workspace                                │\n");
+    printf("┌──────────────────────────────────────────────────────────────┐\n");
+    printf("│                         TREE VIEW                            │\n");
+    printf("├──────────────────────────────────────────────────────────────┤\n");
 
-    /*
-       Print contents
-    */
+    /* Root workspace */
+    printTreeLine(
+        "",
+        "",
+        "📁",
+        "workspace"
+    );
+
+    /* Print contents */
     printTree(
         workspace,
-        "│ ",
+        "",
         &folderCount,
         &fileCount
     );
 
-    printf("├──────────────────────────────────────────────┤\n");
+    /* Bottom separator */
+    printf("├──────────────────────────────────────────────────────────────┤\n");
 
-    printf(
-        "│ 📁 Folders : %-29d│\n",
+    /* Summary */
+    char folderText[100];
+    char fileText[100];
+
+    snprintf(
+        folderText,
+        sizeof(folderText),
+        "📁 Folders : %d",
         folderCount
     );
 
-    printf(
-        "│ 📄 Files   : %-29d│\n",
+    snprintf(
+        fileText,
+        sizeof(fileText),
+        "📄 Files   : %d",
         fileCount
     );
 
-    printf("└──────────────────────────────────────────────┘\n");
+    printTreeLine(
+        "",
+        "",
+        "",
+        folderText
+    );
+
+    printTreeLine(
+        "",
+        "",
+        "",
+        fileText
+    );
+
+    /* Bottom border */
+    printf("└──────────────────────────────────────────────────────────────┘\n");
 
     pressEnter();
 }

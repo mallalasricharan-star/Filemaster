@@ -44,7 +44,9 @@ static int compareStrings(const void *a, const void *b)
 static void findItems(const char *base,
                       const char *rel,
                       char items[][PATH_MAX],
-                      int *count)
+                      int *count,
+                      int wantFolders,
+                      int wantFiles)
 {
     if (*count >= MAX_ITEMS)
         return;
@@ -87,24 +89,30 @@ static void findItems(const char *base,
             continue;
 
         /*
-         * Add both files and folders.
+         * Add only the requested type.
          */
-        snprintf(items[*count],
-                 PATH_MAX,
-                 "%s",
-                 relativePath);
+        if ((S_ISDIR(st.st_mode) && wantFolders) ||
+            (S_ISREG(st.st_mode) && wantFiles))
+        {
+            snprintf(items[*count],
+                     PATH_MAX,
+                     "%s",
+                     relativePath);
 
-        (*count)++;
+            (*count)++;
+        }
 
         /*
-         * Search inside folders also.
+         * Always search inside folders.
          */
         if (S_ISDIR(st.st_mode))
         {
             findItems(fullPath,
                       relativePath,
                       items,
-                      count);
+                      count,
+                      wantFolders,
+                      wantFiles);
         }
     }
 
@@ -221,20 +229,13 @@ void changePermissions(void)
     char items[MAX_ITEMS][PATH_MAX];
     char input[100];
 
-    int count = 0;
+    int typeChoice;
 
+    /*
+     * Get current directory.
+     */
     if (getcwd(cwd, sizeof(cwd)) == NULL)
         return;
-
-    findItems(cwd,
-              "",
-              items,
-              &count);
-
-    qsort(items,
-          (size_t)count,
-          sizeof(items[0]),
-          compareStrings);
 
     printf("\n");
     printf("==============================================================\n");
@@ -243,26 +244,14 @@ void changePermissions(void)
 
     printf("Current Directory : %s\n\n", cwd);
 
-    printf("Files and Folders:\n");
-    printf("--------------------------------------------------------------\n");
+    /*
+     * Select Folder / File.
+     */
+    printf("1. Folder\n");
+    printf("2. File\n");
+    printf("0. Cancel\n");
 
-    if (count == 0)
-    {
-        printf("No files or folders found.\n");
-        pressEnter();
-        return;
-    }
-
-    for (int i = 0; i < count; i++)
-    {
-        printf("%d. %s\n",
-               i + 1,
-               items[i]);
-    }
-
-    printf("\n0. Cancel\n");
-
-    printf("\nEnter File/Folder Number : ");
+    printf("\nEnter your choice : ");
 
     if (!fgets(input,
                sizeof(input),
@@ -272,9 +261,137 @@ void changePermissions(void)
     }
 
     char *end;
-    long number = strtol(input, &end, 10);
+    long choice = strtol(input, &end, 10);
+
+    while (*end == ' ' ||
+           *end == '\t' ||
+           *end == '\n')
+    {
+        end++;
+    }
 
     if (end == input ||
+        *end != '\0' ||
+        choice < 0 ||
+        choice > 2)
+    {
+        printf("\n✗ Invalid choice. Please select 1, 2, or 0.\n");
+        pressEnter();
+        return;
+    }
+
+    if (choice == 0)
+        return;
+
+    typeChoice = (int)choice;
+
+    /*
+     * Find selected type recursively.
+     */
+    int count = 0;
+
+    if (typeChoice == 1)
+    {
+        findItems(
+            cwd,
+            "",
+            items,
+            &count,
+            1,
+            0
+        );
+    }
+    else
+    {
+        findItems(
+            cwd,
+            "",
+            items,
+            &count,
+            0,
+            1
+        );
+    }
+
+    /*
+     * Sort results.
+     */
+    qsort(
+        items,
+        (size_t)count,
+        sizeof(items[0]),
+        compareStrings
+    );
+
+    printf("\n");
+
+    if (typeChoice == 1)
+    {
+        printf("==============================================================\n");
+        printf("                    SELECT FOLDER\n");
+        printf("==============================================================\n\n");
+
+        printf("Folders Found:\n");
+    }
+    else
+    {
+        printf("==============================================================\n");
+        printf("                     SELECT FILE\n");
+        printf("==============================================================\n\n");
+
+        printf("Files Found:\n");
+    }
+
+    printf("--------------------------------------------------------------\n");
+
+    if (count == 0)
+    {
+        if (typeChoice == 1)
+            printf("No folders found.\n");
+        else
+            printf("No files found.\n");
+
+        pressEnter();
+        return;
+    }
+
+    /*
+     * Display items.
+     */
+    for (int i = 0; i < count; i++)
+    {
+        printf("%d. %s\n",
+               i + 1,
+               items[i]);
+    }
+
+    printf("\n0. Cancel\n");
+
+    if (typeChoice == 1)
+        printf("\nEnter Folder Number : ");
+    else
+        printf("\nEnter File Number : ");
+
+    if (!fgets(input,
+               sizeof(input),
+               stdin))
+    {
+        return;
+    }
+
+    end = NULL;
+
+    long number = strtol(input, &end, 10);
+
+    while (*end == ' ' ||
+           *end == '\t' ||
+           *end == '\n')
+    {
+        end++;
+    }
+
+    if (end == input ||
+        *end != '\0' ||
         number < 0 ||
         number > count)
     {
@@ -286,13 +403,18 @@ void changePermissions(void)
     if (number == 0)
         return;
 
+    /*
+     * Build complete path.
+     */
     char path[PATH_MAX];
 
-    snprintf(path,
-             sizeof(path),
-             "%s/%s",
-             cwd,
-             items[number - 1]);
+    snprintf(
+        path,
+        sizeof(path),
+        "%s/%s",
+        cwd,
+        items[number - 1]
+    );
 
     struct stat st;
 
@@ -303,29 +425,44 @@ void changePermissions(void)
         return;
     }
 
-    const char *name = strrchr(items[number - 1], '/');
+    /*
+     * Get basename.
+     */
+    const char *name =
+        strrchr(items[number - 1], '/');
 
     if (name)
         name++;
     else
         name = items[number - 1];
 
+    /*
+     * Get parent location.
+     */
     char location[PATH_MAX];
 
-    snprintf(location,
-             sizeof(location),
-             "%s",
-             path);
+    snprintf(
+        location,
+        sizeof(location),
+        "%s",
+        path
+    );
 
-    char *slash = strrchr(location, '/');
+    char *slash =
+        strrchr(location, '/');
 
     if (slash)
         *slash = '\0';
 
+    /*
+     * Current permissions.
+     */
     char permissions[11];
 
-    permissionString(st.st_mode,
-                     permissions);
+    permissionString(
+        st.st_mode,
+        permissions
+    );
 
     printf("\n");
     printf("==============================================================\n");
@@ -335,10 +472,25 @@ void changePermissions(void)
     printf("Selected Item : %s\n\n",
            name);
 
+    if (S_ISDIR(st.st_mode))
+    {
+        printf("Type                : Folder\n");
+    }
+    else
+    {
+        printf("Type                : File\n");
+    }
+
+    printf("Location            : %s\n",
+           location);
+
     printf("Current Permissions : %03o (%s)\n",
            st.st_mode & 0777,
            permissions);
 
+    /*
+     * Permission examples.
+     */
     printf("\n");
     printf("Permission Examples:\n");
     printf("--------------------------------------------------------------\n");
@@ -349,6 +501,9 @@ void changePermissions(void)
     printf("644 - rw-r--r-- - Owner read/write; others read\n");
     printf("600 - rw------- - Owner read/write only\n");
 
+    /*
+     * Permission symbols.
+     */
     printf("\nPermission Symbols:\n");
     printf("--------------------------------------------------------------\n");
 
@@ -357,6 +512,9 @@ void changePermissions(void)
     printf("x = Execute\n");
     printf("- = No permission\n");
 
+    /*
+     * Ask for new permission.
+     */
     printf("\nEnter New Permission (777/755/700/644/600) : ");
 
     char newPermission[20];
@@ -368,7 +526,9 @@ void changePermissions(void)
         return;
     }
 
-    newPermission[strcspn(newPermission, "\n")] = '\0';
+    newPermission[
+        strcspn(newPermission, "\n")
+    ] = '\0';
 
     if (!validPermission(newPermission))
     {
@@ -378,8 +538,15 @@ void changePermissions(void)
         return;
     }
 
-    mode_t newMode = toMode(newPermission);
+    /*
+     * Convert permission to mode.
+     */
+    mode_t newMode =
+        toMode(newPermission);
 
+    /*
+     * Change permission.
+     */
     if (chmod(path, newMode) == -1)
     {
         perror("chmod");
@@ -387,6 +554,9 @@ void changePermissions(void)
         return;
     }
 
+    /*
+     * Read updated permissions.
+     */
     struct stat updated;
 
     if (lstat(path, &updated) == -1)
@@ -396,13 +566,16 @@ void changePermissions(void)
         return;
     }
 
-    permissionString(updated.st_mode,
-                     permissions);
+    permissionString(
+        updated.st_mode,
+        permissions
+    );
 
     printf("\n");
     printf("✓ Permission changed successfully.\n\n");
 
-    printf("Name        : %s\n", name);
+    printf("Name        : %s\n",
+           name);
 
     printf("Permission  : %03o (%s)\n",
            updated.st_mode & 0777,
